@@ -1,0 +1,92 @@
+'use strict';
+const $=s=>document.querySelector(s), SAVE='student-girl-v01-save', UNLOCK='student-girl-v01-endings', RECORDS='student-girl-v01-reports';
+let state,unlocked=[],endingRecords={},view='chat',busy=false,sound=false,audioContext,previousFocus,toastTimer,previewEnding=null,modalKind=null;
+function load(){try{const raw=localStorage.getItem(SAVE);if(raw){const s=Game.migrateSave(JSON.parse(raw));if(Game.validSave(s))state=s;else toast('旧存档不兼容，已开始新的一局。');}const u=JSON.parse(localStorage.getItem(UNLOCK)||'[]');if(Array.isArray(u))unlocked=u.filter(id=>Game.ENDINGS.some(e=>e.id===id));}catch{toast('浏览器未开放本地存档；本局仍可游玩。');}if(!state)state=Game.initial(seed());try{const records=JSON.parse(localStorage.getItem(RECORDS)||'{}');if(records&&typeof records==='object'&&!Array.isArray(records))endingRecords=records;}catch{}if(state.ending&&!endingRecords[state.ending])recordEnding();}
+function seed(){return crypto.getRandomValues(new Uint32Array(1))[0]||1;}
+function save(){try{localStorage.setItem(SAVE,JSON.stringify(state));localStorage.setItem(UNLOCK,JSON.stringify(unlocked));localStorage.setItem(RECORDS,JSON.stringify(endingRecords));$('#saveStatus').textContent='✓ 已自动保存';}catch{$('#saveStatus').textContent='! 本地存档不可用';}}
+function toast(t){$('#toast').textContent=t;$('#toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').hidden=true,3000);}
+function beep(hz=660){if(!sound)return;try{audioContext??=new (window.AudioContext||window.webkitAudioContext)();audioContext.resume();const o=audioContext.createOscillator(),g=audioContext.createGain();o.type='sine';o.frequency.value=hz;g.gain.setValueAtTime(.025,audioContext.currentTime);g.gain.exponentialRampToValueAtTime(.001,audioContext.currentTime+.09);o.connect(g);g.connect(audioContext.destination);o.start();o.stop(audioContext.currentTime+.1);}catch{}}
+function esc(t){return String(t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function avatar(){return '<div class="avatar"><img src="room.png" alt=""></div>';}
+function day(){return Math.min(14,Math.floor(state.turn/3)+1);}function slot(){return Math.min(2,state.turn%3);}const periods=['上午','下午','晚上'];
+function render(){const d=day(),sl=slot(),ended=state.stage!=='playing';$('#daysLeft').textContent=state.turn>=42?'0':15-d;$('#dayLabel').textContent=`DAY ${String(d).padStart(2,'0')}`;$('#slotLabel').textContent=ended?'本局已结束':periods[sl];$('#roomTime').textContent=`DAY ${String(d).padStart(2,'0')} / ${periods[sl]}`;$('#clock').textContent=`DAY ${String(d).padStart(2,'0')} · ${['09:00','14:00','21:00'][sl]}`;$('#turnCount').textContent=`${String(state.turn).padStart(2,'0')} / 42`;
+$('#slots').innerHTML=[0,1,2].map(i=>`<i class="${i<sl?'done':i===sl?'current':''}"></i>`).join('');$('#calendar').innerHTML=Array.from({length:14},(_,i)=>`<span class="${i+1<d||state.turn===42?'past':i+1===d?'today':''}">${String(i+1).padStart(2,'0')}</span>`).join('');
+$('#stats').innerHTML=[['D','压抑值','#c28ca9'],['E','亢奋值','#c3aa68'],['H','健康值','#89ad92']].map(([key,label,color])=>`<div class="stat ${state.stats[key]<=15||state.stats[key]>=80?'warning':''}"><label>${label}</label><div class="stat-track" role="meter" aria-label="${label}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.max(0,Math.min(100,state.stats[key]))}"><div class="stat-fill" style="--fill:${color};width:${Math.max(0,Math.min(100,state.stats[key]))}%"></div></div><strong>${Math.max(0,Math.min(100,state.stats[key]))}</strong></div>`).join('');
+$('#mood').textContent=state.stats.H<=25?'有点累了……让我缓一缓。':state.stats.D>=80?'头好痒，好像要长出脑子了。':state.stats.E>=80?'区区马斯克！':state.turn===0?'今天也不想复习。':state.messages.filter(m=>m.who==='girl').at(-1)?.text||'今天也不想复习。';$('#presence').textContent=ended?'连接即将结束…':'正在等待你的安排…';$('.room img').style.filter=sl===2?'brightness(.84) saturate(.85) hue-rotate(8deg)':'none';
+document.querySelectorAll('[data-action]').forEach(b=>b.disabled=ended||busy);$('#chatTab').classList.toggle('active',view==='chat');$('#historyTab').classList.toggle('active',view==='history');$('#chatTab span').textContent=state.messages.filter(x=>x.who==='girl').length;
+const chat=$('#chatContent');if(view==='chat'){chat.innerHTML='<div class="chat-stamp">— TODAY, WITH YOU —</div>'+state.messages.map(m=>m.who==='event'?`<div class="message event">✦ ${esc(m.text)}</div>`:`<div class="message ${m.who}">${m.who==='girl'?avatar():''}<div class="bubble">${esc(m.text)}</div></div>`).join('');chat.scrollTop=chat.scrollHeight;}else{chat.innerHTML=state.history.length?state.history.slice().reverse().map(h=>`<article class="history-row"><header><b>${esc(h.label)}</b><small>DAY ${Math.ceil(h.turn/3)} · ${periods[(h.turn-1)%3]}</small></header><p>${esc(h.text)}${h.card?`<br>✦ ${esc(h.card)}`:''}</p><p class="history-delta">${['压抑','亢奋','健康'].map((x,i)=>`${x} ${h.delta[i]>0?'↑':h.delta[i]<0?'↓':'—'}`).join('　')}</p></article>`).join(''):'<div class="empty-history">还没有留下记录。<br>从今天的第一个决定开始吧。</div>';}
+renderEnding();}
+function showDialog(title,body,wide=false){modalKind=null;previousFocus=document.activeElement;$('#dialogTitle').textContent=title;$('#dialogBody').innerHTML=body;$('#dialog').style.width=wide?'680px':'580px';$('#modalLayer').hidden=false;$('#desktop').inert=true;setTimeout(()=>$('#dialogBody button, #dialogBody input, #closeDialog')?.focus(),0);}
+function closeDialog(){if($('#modalLayer').hidden)return;if(modalKind==='milestone'){state.pendingEvent=null;save();}modalKind=null;$('#modalLayer').hidden=true;$('#desktop').inert=state.stage!=='playing'||!!previewEnding;previousFocus?.focus?.();renderEnding();}
+const ACTION_HINTS={
+  "study": {
+    "chips": [
+      "压抑 ↑ 有点想那个",
+      "亢奋 ↑ 爱因斯坦不过如此",
+      "健康 ↓ 费点电"
+    ],
+    "confirm": "好，开始复习"
+  },
+  "rest": {
+    "chips": [
+      "压抑 ↓ 松口气",
+      "亢奋 ↓ 慢下来",
+      "健康 ↑ 充点电"
+    ],
+    "confirm": "批准这次小憩"
+  },
+  "go_out": {
+    "chips": [
+      "压抑 ↓ 吹散烦恼",
+      "亢奋 ↓ 平静一点",
+      "健康 ↑ 活动一下"
+    ],
+    "confirm": "走，出去转转"
+  },
+  "surf": {
+    "chips": [
+      "压抑 ↓ 换换心情",
+      "亢奋 ↑ 越刷越嗨",
+      "健康 ↓ 眼睛辛苦啦"
+    ],
+    "confirm": "好，再看亿会儿"
+  },
+  "magic": {
+    "chips": [
+      "压抑 ↑ 你猜我看了什么",
+      "亢奋 ↑ 你猜我又看了什么",
+      "健康 ↓ 消耗体力"
+    ],
+    "confirm": "魔法攀墙少女，变身！"
+  }
+};
+function actionRisk(action){const a=Game.ACTIONS[action];return {nearEdge:['D','E','H'].some((key,i)=>state.stats[key]+a.delta[i]<=0||state.stats[key]+a.delta[i]>=100),late:state.chains[action]?.stage===2&&state.chains[action].lastDay<Math.floor(state.turn/3)+1};}
+function setupActionTooltips(){document.querySelectorAll('[data-action]').forEach(button=>{const action=button.dataset.action,id='hint-'+action;button.setAttribute('aria-describedby',id);const tip=document.createElement('span');tip.id=id;tip.className='action-tooltip';tip.setAttribute('role','tooltip');tip.innerHTML=ACTION_HINTS[action].chips.map(c=>'<span>'+esc(c)+'</span>').join('');button.appendChild(tip);});}
+function requestAction(action,subject){if(busy||state.stage!=='playing'||state.pendingEvent)return;const risk=actionRisk(action);if(!risk.nearEdge&&!risk.late){perform(action,subject);return;}const a=Game.ACTIONS[action],h=ACTION_HINTS[action],sub=Game.SUBJECTS.find(x=>x.id===subject);showDialog(a.icon+' BEFORE THE END / 温馨提醒','<div class="eyebrow">A LITTLE HEADS-UP</div><h2>这一步，可能就是故事的转折。</h2>'+(sub?'<div class="chosen-subject">▤ 本次复习：'+sub.name+'</div>':'')+(risk.nearEdge?'<div class="action-warning">⚠ 状态已经靠近边缘。这次行动可能让故事提前收场，真的要继续吗？</div>':'')+(risk.late?'<div class="action-warning story-warning">✦ 最近，她似乎越来越在意这件事。继续下去，故事可能走向新的结局。</div>':'')+'<div class="effect-chips">'+h.chips.map(c=>'<span>'+esc(c)+'</span>').join('')+'</div><div class="dialog-note">现在换个安排，也完全来得及。</div><div class="button-row"><button class="secondary" data-command="close">我再想想</button><button class="primary" data-execute="'+action+'" '+(subject?'data-course="'+subject+'"':'')+'>'+h.confirm+'</button></div>');}
+function showMilestone(){const m=state.pendingEvent;if(!m||state.stage!=='playing')return;showDialog('✦ LITTLE EVENT / 日常的小插曲',`<div class="eyebrow">SOMETHING IS CHANGING</div><h2>${esc(m.title)}</h2><div class="milestone-chat">${m.lines.map(t=>`<div class="message">${avatar()}<div class="bubble">${esc(t)}</div></div>`).join('')}</div><div class="dialog-note">故事还在继续。下一步，依然由你安排。</div><div class="button-row"><button class="primary" data-command="close">知道啦，继续今天的计划</button></div>`);modalKind='milestone';}
+
+function chooseStudy(){if(state.stage!=='playing'||busy||state.pendingEvent)return;showDialog('▤ COURSE_FILES / 选择课程','<div class="eyebrow">ONE SUBJECT, ONE SMALL STEP</div><h2>今天，先学哪一科？</h2><p>不用一下子把所有事情都做好。<br>先从一门课开始。</p><div class="subject-list">'+Game.SUBJECTS.map(s=>`<button class="subject-btn" data-subject="${s.id}"><span>${s.symbol}</span><span><strong>${s.name}</strong><small>${s.desc}</small></span><span>↗</span></button>`).join('')+'</div><div class="dialog-note">✎ 选定科目即开始学习。取消选择不消耗行动，学习成果不会以数值显示。</div>');}
+function perform(action,subject){if(busy||state.stage!=='playing'||state.pendingEvent)return;busy=true;closeDialog();beep(520);try{state=Game.act(state,action,subject);if(state.ending){if(!unlocked.includes(state.ending))unlocked.push(state.ending);recordEnding();}save();view='chat';render();if(state.pendingEvent)showMilestone();$('.room-window').classList.add('pulse');setTimeout(()=>$('.room-window').classList.remove('pulse'),600);}catch(e){toast('这次行动未执行，请重新选择。');console.error(e);}setTimeout(()=>{busy=false;render();},450);}
+function showHelp(){showDialog('✳ README / 游戏说明','<div class="eyebrow">14 DAYS. 42 CHOICES.</div><h2>陪她走过期末前的日子。</h2><p>你是屏幕另一端监督她学习的人。每天安排三次行动，14天后迎来期末考试。</p><ol class="help-list"><li>选择「复习功课」，再选一门课程。学习点始终隐藏。</li><li>留意压抑、亢奋与健康。任一项触及0或100，都可能提前结束。</li><li>外出、休息、冲浪和魔法先触发阶段事件，故事逐步发展后才可能出现特殊结局。</li><li>四科全部通过，或者至少一科未通过，会迎来不同的期末通知。</li></ol><div class="dialog-note">结局优先级：特殊结局 → 属性极值 → 期末考试。<br>同类按规则顺序判定。13种结局，等待你慢慢遇见。</div><div class="button-row"><button class="secondary" data-command="gallery">结局相册</button><button class="secondary" data-command="settings">原型说明</button><button class="primary" data-command="close">知道了，开始吧</button></div>');}
+function showSettings(){showDialog('⚙ PROTOTYPE / 原型说明','<div class="eyebrow">PLAYABLE PROTOTYPE · 0.4</div><h2>这次实现的约定</h2><p>已确认数值按规则实现。下列尚未定案的细节，采用可替换的首版参数：</p><ul class="help-list"><li>四科学习点从0开始，考试分别独立抽样。</li><li>事件概率和学习效率均读取行动前属性。</li><li>基础效果与普通卡效果合并后检查边界，跨过0或100也算触边。</li><li>非学习行动需累计推进三个事件阶段，且同一条故事每天最多推进一次。前两次是日常插曲，第三次才进入特殊结局；魔法在最后阶段二选一。</li><li>普通随机卡暂在学习事件中抽取，使用6张原创测试卡。暂不含稀有卡；另有四条三阶段行动事件链。</li></ul><label class="toggle-line"><span>普通事件测试卡<small style="display:block;margin-top:5px;color:#a18ba9">仅影响接下来的学习事件</small></span><input type="checkbox" id="cardsToggle" '+(state.settings.cards?'checked':'')+(state.stage!=='playing'?' disabled':'')+'></label><details class="settings-details"><summary>关于行动提示</summary><p>鼠标悬停在行动按钮上即可查看属性变化方向，不显示具体增减量。普通行动点击即执行，学习先选科；仅接近极值或特殊结局时额外提醒。查看提示和取消选择不消耗行动。</p></details><p>原创角色与图像，复古桌面界面。浏览器本地自动存档；不会连接真实社交账户。结局里的链接和通知均为游戏内容。</p><div class="button-row"><button class="primary" data-command="close">返回桌面</button></div>',true);}
+function showGallery(){showDialog('♡ ENDING_ALBUM / 结局相册',`<div class="eyebrow">LITTLE MOMENTS, DIFFERENT ENDINGS</div><h2>走过的另一种人生</h2><p>已收集 ${unlocked.length} / 13 个结局。已解锁的故事可以再次回看。</p><div class="gallery-grid">`+Game.ENDINGS.map(e=>{const known=unlocked.includes(e.id);return `<button class="gallery-card ${known?'':'locked'}" ${known?`data-ending="${e.id}"`:'disabled'}><small>${e.id}</small><span>${known?e.icon:'◇'}</span><b>${known?e.title:'尚未遇见'}</b></button>`;}).join('')+'</div><div class="button-row"><button class="primary" data-command="close">返回桌面</button></div>',true);}
+function confirmRestart(){showDialog('↻ NEW GAME / 新的一局','<div class="eyebrow">ANOTHER FOURTEEN DAYS</div><h2>重新开始这14天？</h2><p>当前进度将被替换，已经解锁的结局会保留。</p><div class="button-row"><button class="secondary" data-command="close">再等一下</button><button class="primary" data-command="new">重新开始</button></div>');}
+function newGame(){const cards=state.settings.cards;previewEnding=null;state=Game.initial(seed(),cards);busy=false;closeDialog();save();render();beep(880);toast('新的一局开始了。今天，也请多关照。');}
+
+function recordEnding(){if(!state.ending)return;endingRecords[state.ending]={turn:state.turn,exam:Array.isArray(state.exam)?state.exam.map(r=>({id:r.id,passed:r.passed})):null};}
+function examReport(ending){const isExam=ending.id==='E12'||ending.id==='E13';const record=previewEnding?endingRecords[ending.id]:(state.ending===ending.id?{exam:state.exam}:endingRecords[ending.id]);const results=Array.isArray(record?.exam)?record.exam:null;const note=!isExam?'故事提前结束，本局未参加期末考试。':!results?'旧版相册没有保存这次的分科成绩。':'成绩已经公布。这次的努力，都有了回音。';return '<section class="exam-report" aria-label="四科期末成绩"><header><span>▤ 期末成绩单</span><small>FINAL EXAM REPORT</small></header><table><thead><tr><th scope="col">课程</th><th scope="col">成绩</th></tr></thead><tbody>'+Game.SUBJECTS.map(sub=>{const r=results?.find(x=>x.id===sub.id&&typeof x.passed==='boolean');const kind=!isExam?'pending':!r?'unknown':r.passed?'passed':'failed';const label=!isExam?'未参加':!r?'未记录':r.passed?'通过':'未通过';return '<tr><th scope="row">'+esc(sub.name)+'</th><td><span class="grade '+kind+'">'+(kind==='passed'?'✓ ':kind==='failed'?'! ':'— ')+label+'</span></td></tr>';}).join('')+'</tbody></table><p>'+note+'</p></section>';}
+
+function endingCard(e){if(e.type==='sleep')return `<div class="sleep-screen">${esc(e.body)}</div>`;const post=e.type==='post'||(e.type==='editor'&&e.id==='E11');const title={post:'X / 动态',notice:'CAMPUS / 通知',editor:'UNTITLED / 编辑器',chat:'MESSAGES / 聊天',reminder:'REMINDER / 提醒',feed:'FEED / 信息流',note:'NOTES / 备忘录'}[e.type];return `<section class="window"><div class="titlebar"><span>${e.icon} &nbsp; ${title}</span><span>◇</span></div><div class="ending-body">${post?`<div class="post-account">${avatar()}<div><strong>student_girl</strong><small>@studentgirl · 刚刚</small></div></div><div class="post-text">${esc(e.body)}</div>`:esc(e.body)}</div><div class="ending-bottom"><span>END OF CONNECTION</span><span>♡</span></div></section>`;}
+let lastEndingFocus='';
+function renderEnding(){const layer=$('#endingLayer');if(state.stage==='playing'&&!previewEnding){layer.hidden=true;$('#desktop').inert=!$('#modalLayer').hidden;lastEndingFocus='';return;}const e=Game.ENDINGS.find(x=>x.id===(previewEnding||state.ending));if(!e)return;layer.hidden=false;$('#desktop').inert=true;const scene=state.stage==='scene'&&!previewEnding;const focusKey=`${e.id}-${scene?state.sceneStep:'end'}-${!!previewEnding}`;
+layer.innerHTML=`<div class="ending-shell ${scene&&e.id==='E05'?'scene-sleep':''}" role="dialog" aria-modal="true" aria-label="${scene?'结局前对话':e.title}"><div class="ending-code">${scene?'CONNECTION / LAST MESSAGE':`${e.id} · ENDING UNLOCKED`}</div>${scene?`<div class="scene-portrait"><img src="room.png" alt="女孩"></div><div class="scene-bubble" aria-live="polite">${esc(e.scene[state.sceneStep])}</div><div class="scene-actions"><button class="primary" data-scene="next">${state.sceneStep<e.scene.length-1?'继续 ▸':'进入结局 ↗'}</button><button class="text-btn" data-scene="skip">跳过演出</button></div>`:`<h2>${esc(e.title)}</h2>${endingCard(e)}${examReport(e)}<div class="button-row">${previewEnding?'<button class="primary" data-command="back-gallery">返回相册</button>':'<button class="secondary" data-command="gallery">结局相册</button><button class="primary" data-command="restart">新的一局 ↗</button>'}</div>`}</div>`;
+if(lastEndingFocus!==focusKey){lastEndingFocus=focusKey;setTimeout(()=>layer.querySelector('button')?.focus(),0);}}
+function command(cmd){if(cmd==='close')closeDialog();else if(cmd==='settings')showSettings();else if(cmd==='gallery'){previewEnding=null;$('#endingLayer').hidden=true;showGallery();}else if(cmd==='restart')confirmRestart();else if(cmd==='new')newGame();else if(cmd==='back-gallery'){previewEnding=null;$('#endingLayer').hidden=true;showGallery();}}
+document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||b.disabled)return;if(b.dataset.action){if(b.dataset.action==='study')chooseStudy();else requestAction(b.dataset.action);}else if(b.dataset.subject)requestAction('study',b.dataset.subject);else if(b.dataset.execute)perform(b.dataset.execute,b.dataset.course);else if(b.dataset.command)command(b.dataset.command);else if(b.dataset.panel){const p=b.dataset.panel;if(p==='study')chooseStudy();if(p==='gallery')showGallery();if(p==='settings')showSettings();if(p==='history'){view='history';render();$('.chat-window').scrollIntoView({behavior:'smooth',block:'nearest'});}}else if(b.dataset.scene){state=Game.advanceScene(state,b.dataset.scene==='skip');save();renderEnding();beep(440);}else if(b.dataset.ending){previewEnding=b.dataset.ending;closeDialog();renderEnding();}});
+$('#chatTab').onclick=()=>{view='chat';render();};$('#historyTab').onclick=()=>{view='history';render();};$('#helpBtn').onclick=showHelp;$('#startBtn').onclick=showHelp;$('#restartBtn').onclick=confirmRestart;$('#closeDialog').onclick=()=>{closeDialog();renderEnding();};$('#soundBtn').onclick=()=>{sound=!sound;$('#soundBtn').textContent=sound?'♪ ON':'♪ OFF';$('#soundBtn').setAttribute('aria-label',sound?'关闭音效':'开启音效');beep();};$('#roomExpand').onclick=()=>{$('.room-window').classList.toggle('expanded');$('#roomExpand').setAttribute('aria-label',$('.room-window').classList.contains('expanded')?'缩小房间':'放大房间');};
+document.addEventListener('change',e=>{if(e.target.id==='cardsToggle'){state.settings.cards=e.target.checked;save();}});
+$('#modalLayer').addEventListener('click',e=>{if(e.target===$('#modalLayer')){closeDialog();renderEnding();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if(!$('#modalLayer').hidden){closeDialog();renderEnding();}else if(previewEnding){previewEnding=null;showGallery();$('#endingLayer').hidden=true;}else $('.room-window').classList.remove('expanded');}if(e.key==='Tab'){const container=!$('#modalLayer').hidden?$('#dialog'):!$('#endingLayer').hidden?$('#endingLayer'):null;if(!container)return;const items=[...container.querySelectorAll('button:not(:disabled),input:not(:disabled),summary,[tabindex="0"]')];if(!items.length)return;const first=items[0],last=items.at(-1);if(e.shiftKey&&document.activeElement===first){last.focus();e.preventDefault();}else if(!e.shiftKey&&document.activeElement===last){first.focus();e.preventDefault();}}});
+setupActionTooltips();load();render();save();if(state.pendingEvent)showMilestone();
+
+
