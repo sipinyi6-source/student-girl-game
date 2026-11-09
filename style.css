@@ -16,3 +16,24 @@
 @media(max-width:790px){.status-float{grid-template-columns:185px 1fr 90px;gap:12px;padding:10px;width:calc(100% - 24px)}.compact-stats{gap:9px}.day-orbit{width:50px;height:50px}.topbar{height:70px}.float-day{gap:7px}}
 @media(max-width:580px){.desktop{padding-top:98px}.status-float{top:5px;width:calc(100% - 12px);grid-template-columns:122px 1fr 55px;gap:7px;padding:9px 7px;border-top-width:4px}.day-orbit{width:42px;height:42px}.day-orbit strong{font-size:21px}.float-day{gap:4px}.float-day small{font-size:8px}.float-day b{font-size:9px}.float-day span{font-size:8px;max-width:74px}.compact-stats{gap:6px}.compact-stat{grid-template-columns:1fr;text-align:center;gap:4px;font-size:10px}.compact-stat strong{font-size:15px}.mini-meter{grid-column:auto;height:4px}.progress-trigger{display:flex;flex-direction:column;gap:2px;padding:5px 2px;min-height:59px}.progress-trigger b{font-size:9px}.progress-trigger small{display:none}.progress-trigger>span{font-size:17px}.windows{grid-template-areas:'room' 'chat' 'actions';grid-template-columns:minmax(0,1fr)}.room-window,.chat-window,.actions-window{grid-row:auto}.chat-content{height:170px}.topbar{height:66px;margin-bottom:12px}.room{aspect-ratio:1.7}.quick-chat-options button{font-size:11px}.progress-details{padding:8px}.progress-details .course-progress-row{font-size:12px}.chat-window,.actions-window,.room-window{scroll-margin-top:100px}}
 @media(max-width:360px){.status-float{grid-template-columns:114px 1fr 47px;gap:4px}.compact-stats{gap:4px}.float-day small{font-size:7px}.progress-trigger b{font-size:8px}}
+
+/* v0.7: layered portrait and swapped panels */
+.windows{grid-template-areas:'room chat' 'actions chat'}
+.chat-window{align-self:stretch;display:flex;flex-direction:column;min-height:0}
+.chat-window .chat-content{flex:1;min-height:260px;max-height:570px}
+.room-scene{position:absolute;inset:0;transition:filter .7s}
+.room-scene>img,.girl-layer,.girl-layer img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 43%}
+.girl-layer{transform-origin:50% 88%;animation:girl-breathe 5s ease-in-out infinite;pointer-events:none}
+.girl-expression{clip-path:polygon(37% 22%,59% 20%,60% 45%,37% 46%)}
+.girl-blink{clip-path:polygon(38% 26%,56% 22%,57% 33%,39% 36%);opacity:0}
+.girl-blink.closed{opacity:1}
+.girl-layer[data-expression=excited]{animation-duration:3.3s}
+.girl-layer[data-expression=tired]{animation-duration:6.5s}
+.girl-layer.paused{animation-play-state:paused}
+@keyframes girl-breathe{0%,100%{transform:translateY(0) scaleY(1)}50%{transform:translateY(-1px) scaleY(1.006)}}
+@media(max-width:580px){.windows{grid-template-areas:'room' 'actions' 'chat'}.chat-window .chat-content{height:230px;min-height:230px;max-height:230px;flex:none}}
+@media(prefers-reduced-motion:reduce){.girl-layer{animation:none}.girl-blink{display:none}}
+/* Keep face masks in the original 4:3 coordinate system at every viewport size. */
+.room{container-type:size}
+.room-scene{inset:auto;left:50%;top:43%;width:max(100cqw,133.333333cqh);height:max(75cqw,100cqh);transform:translate(-50%,-43%)}
+.room-scene>img,.girl-layer img{object-fit:fill}
